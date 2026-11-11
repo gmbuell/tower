@@ -232,3 +232,25 @@ func TestInstallPreservesOtherHooks(t *testing.T) {
 		t.Fatalf("uninstall result wrong:\n%s", text)
 	}
 }
+
+// The ps path is what macOS uses; ps takes the same flags on Linux, so it is checked here.
+func TestPsInfo(t *testing.T) {
+	parent, start, command := psInfo(os.Getpid())
+	if parent != os.Getppid() || start == 0 || command == "" {
+		t.Fatalf("psInfo(self) = %d, %d, %q", parent, start, command)
+	}
+	if _, again, _ := psInfo(os.Getpid()); again != start {
+		t.Fatalf("start time is not stable: %d then %d", start, again)
+	}
+	if _, start, _ := psInfo(1 << 30); start != 0 {
+		t.Fatalf("missing process has start %d", start)
+	}
+	hasProc = false
+	defer func() { hasProc = true }()
+	if procStart(os.Getpid()) != start || procParent(os.Getpid()) != parent {
+		t.Fatal("procStart and procParent do not use ps")
+	}
+	if !isAgentProc(os.Getpid(), filepath.Base(os.Args[0])) || isAgentProc(os.Getpid(), "claude") {
+		t.Fatalf("isAgentProc misreads %q", command)
+	}
+}

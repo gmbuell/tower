@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -171,6 +173,28 @@ func appendLine(path string, data []byte) error {
 	return err
 }
 
+// Linux reads /proc; everything else (macOS) asks ps.
+var hasProc = runtime.GOOS == "linux"
+
+// psInfo is a process's parent, start time and command line from ps, or zeros when it is gone.
+// shortcut: one ps run per lookup; read `ps -ax` once per command if hooks get slow with many sessions.
+func psInfo(pid int) (parent int, start uint64, command string) {
+	cmd := exec.Command("ps", "-o", "ppid=,stat=,lstart=,command=", "-p", strconv.Itoa(pid))
+	// lstart is parsed, so pin its language and time zone.
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "TZ=UTC")
+	out, err := cmd.Output()
+	f := strings.Fields(string(out))
+	if err != nil || len(f) < 8 || strings.HasPrefix(f[1], "Z") {
+		return 0, 0, ""
+	}
+	t, err := time.Parse("Mon Jan 2 15:04:05 2006", strings.Join(f[2:7], " "))
+	if err != nil {
+		return 0, 0, ""
+	}
+	parent, _ = strconv.Atoi(f[0])
+	return parent, uint64(t.Unix()), strings.Join(f[7:], " ")
+}
+
 func procFields(pid int) []string {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
@@ -183,9 +207,13 @@ func procFields(pid int) []string {
 	return fields
 }
 
-// procStart is the process start time in clock ticks, or 0 when the process is gone.
+// procStart is the process start time (clock ticks on Linux, Unix seconds elsewhere), or 0 when the process is gone.
 // Comparing it guards against the PID being reused by another process.
 func procStart(pid int) uint64 {
+	if !hasProc {
+		_, start, _ := psInfo(pid)
+		return start
+	}
 	fields := procFields(pid)
 	if fields == nil {
 		return 0
@@ -195,6 +223,10 @@ func procStart(pid int) uint64 {
 }
 
 func procParent(pid int) int {
+	if !hasProc {
+		parent, _, _ := psInfo(pid)
+		return parent
+	}
 	fields := procFields(pid)
 	if fields == nil {
 		return 0
@@ -204,6 +236,16 @@ func procParent(pid int) int {
 }
 
 func isAgentProc(pid int, agent string) bool {
+	if !hasProc {
+		// shortcut: the command line is split on spaces, so an agent installed under a path with spaces is missed.
+		_, _, command := psInfo(pid)
+		for i, arg := range strings.Fields(command) {
+			if i < 2 && (filepath.Base(arg) == agent || strings.Contains(arg, "/"+agent+"/")) {
+				return true
+			}
+		}
+		return false
+	}
 	if comm, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid)); strings.TrimSpace(string(comm)) == agent {
 		return true
 	}

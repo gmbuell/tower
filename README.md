@@ -13,7 +13,7 @@ Claude Code / Codex ──hooks──▶ tower hook <agent> ──▶ state dir 
 ```
 
 - **Session records:** each agent session gets one JSON file in `sessions/`, holding its repo, worktree, intent, process ID and last prompt time. A subagent working in a different worktree gets its own record under the same session ID.
-- **Liveness:** a session is live while its agent process exists, checked by PID plus process start time via `/proc` (so Linux only). If no process was found, it counts as live until 12 hours of quiet. Subagents live and end with their coordinator.
+- **Liveness:** a session is live while its agent process exists, checked by PID plus process start time, read from `/proc` on Linux and from `ps` on macOS. If no process was found, it counts as live until 12 hours of quiet. Subagents live and end with their coordinator.
 - **Changed files:** per worktree, this is uncommitted and untracked files, plus everything committed since it branched from the main checkout's HEAD. Git runs with `GIT_OPTIONAL_LOCKS=0` so it never contends with an agent's own git commands.
 - **Overlap:** two worktrees overlap when their changed-file lists intersect. A session's own worktree and its subagents' worktrees are one family and are never compared with each other.
 - **Cleanup:** dead records are deleted during sweeps, except the newest one for a worktree that still has changes, which is kept as its "last intent". Repos whose directory is gone are forgotten.
